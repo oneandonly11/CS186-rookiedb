@@ -81,8 +81,12 @@ class InnerNode extends BPlusNode {
     @Override
     public LeafNode get(DataBox key) {
         // TODO(proj2): implement
-
-        return null;
+        int idx = numLessThanEqual(key,this.keys);
+        BPlusNode node = this.getChild(idx);
+        if(node.getClass() == InnerNode.class){
+            return ((InnerNode) node).get(key);
+        }
+        return ((LeafNode) node).get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
@@ -90,16 +94,54 @@ class InnerNode extends BPlusNode {
     public LeafNode getLeftmostLeaf() {
         assert(children.size() > 0);
         // TODO(proj2): implement
-
-        return null;
+        BPlusNode node = this.getChild(0);
+        if(node.getClass() == InnerNode.class){
+            return ((InnerNode) node).getLeftmostLeaf();
+        }
+        return ((LeafNode) node).getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
         // TODO(proj2): implement
+        int idx = numLessThanEqual(key,this.keys);
+        BPlusNode node = this.getChild(idx);
+        Optional<Pair<DataBox, Long>> data;
 
-        return Optional.empty();
+        data = node.put(key,rid);
+
+        if(data.isEmpty()){
+            return Optional.empty();
+        }
+
+        DataBox newKey = data.get().getFirst();
+        Long newChild = data.get().getSecond();
+        int order = this.metadata.getOrder();
+        int index = numLessThanEqual(newKey, this.keys);
+        this.keys.add(index, newKey);
+        this.children.add(index + 1, newChild);
+
+
+        if (this.keys.size() <= 2 * order) {
+            sync();
+            return Optional.empty();
+        }
+
+
+        assert (this.keys.size() == 2 * order + 1);
+
+        DataBox midEntry = this.keys.get(order);
+        List<DataBox> newKeys = new ArrayList<>(this.keys.subList(order + 1, 2 * order + 1));
+        this.keys.subList(order, 2 * order + 1).clear();
+        List<Long> newChildren = new ArrayList<>(this.children.subList(order + 1, 2 * order + 2));
+        this.children.subList(order + 1, 2 * order + 2).clear();
+
+        InnerNode newIN = new InnerNode(this.metadata, this.bufferManager, newKeys, newChildren, this.treeContext);
+        this.sync();
+        newIN.sync();
+
+        return Optional.of(new Pair<>(midEntry, newIN.getPage().getPageNum()));
     }
 
     // See BPlusNode.bulkLoad.
@@ -107,14 +149,47 @@ class InnerNode extends BPlusNode {
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
         // TODO(proj2): implement
+        Optional<Pair<DataBox, Long>> popUp = getChild(children.size() - 1).bulkLoad(data, fillFactor);
+        if (!popUp.isPresent()) return Optional.empty();
 
-        return Optional.empty();
+        // sanity check
+        int i = Collections.binarySearch(keys, popUp.get().getFirst());
+        assert -i - 1 == keys.size();
+
+        int order = metadata.getOrder();
+        boolean isFull = order * 2 == keys.size();
+
+        if (!isFull) {
+            keys.add(popUp.get().getFirst());
+            children.add(popUp.get().getSecond());
+            sync();
+            return Optional.empty();
+        }
+        ArrayList<DataBox> newKeys = new ArrayList<>(keys.subList(order + 1, keys.size()));
+        newKeys.add(popUp.get().getFirst());
+        ArrayList<Long> newChildren = new ArrayList<>(children.subList(order + 1, children.size()));
+        newChildren.add(popUp.get().getSecond());
+        InnerNode newInnerNode = new InnerNode(metadata, bufferManager, newKeys, newChildren, treeContext);
+        Optional<Pair<DataBox, Long>> returning = Optional.of(new Pair<>(keys.get(order), newInnerNode.getPage().getPageNum()));
+        keys.subList(order, keys.size()).clear();
+        children.subList(order + 1, children.size()).clear();
+        sync();
+        return returning;
+
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
         // TODO(proj2): implement
+        int idx = numLessThanEqual(key,this.keys);
+        BPlusNode node = this.getChild(idx);
+        if(node.getClass() == InnerNode.class){
+            ((InnerNode) node).remove(key);
+        }
+        else{
+            ((LeafNode) node).remove(key);
+        }
 
         return;
     }
